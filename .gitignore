@@ -149,6 +149,7 @@ pass.py
 *.txt
 
 
+
 # Celery
 celerybeat-schedule
 celerybeat.pid

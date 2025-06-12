@@ -770,7 +770,7 @@ class AsyncQueryEngine:
     async def process_query_with_tasks(self, query: str, context: dict = None) -> dict:
         """Xử lý query với task-based approach"""
         # Identify task
-        task_name = self.task_patterns.identify_task(query)
+        task_name = await self.task_patterns.identify_task(query)
         
         if not task_name:
             return {

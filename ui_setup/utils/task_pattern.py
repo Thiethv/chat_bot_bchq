@@ -11,7 +11,7 @@ class TaskPattern:
         self.task_patterns = self._define_task_patterns()
         self.normalize_text = DataProcessor().normalize_text
         self._embedding_model = None
-        self.task_embeddings = self._generate_task_embeddings()
+        self.task_embeddings = None
     
     # KẾT HỢP GIỮ EMBEDINGS MODEL VÀ TASK PATTERNS
     async def _get_embedding_model(self):
@@ -24,14 +24,16 @@ class TaskPattern:
             )
         return self._embedding_model
     
-    def _generate_task_embeddings(self):
-        self._embedding_model = asyncio.run(self._get_embedding_model())
+    async def _generate_task_embeddings(self):
+        model = await self._get_embedding_model()
         embeddings = {}
         for task, config in self.task_patterns.items():
             # Kết hợp mô tả và keywords
             text = f"{config['description']} {' '.join(config['primary_keywords'])}"
-            embeddings[task] = self._embedding_model.encode(text)
-        return embeddings
+            embeddings[task] = model.encode(text)
+        
+        self.task_embeddings = embeddings
+        # return embeddings
     
     # Advanced method
     def _define_task_patterns(self):
@@ -183,8 +185,12 @@ class TaskPattern:
             }
         }
     
-    def identify_task(self, query: str) -> Optional[str]:
-        query_embed = self._embedding_model.encode(query)
+    async def identify_task(self, query: str) -> Optional[str]:
+        if self.task_embeddings is None:
+            await self._generate_task_embeddings()
+        model = await self._get_embedding_model()
+
+        query_embed = model.encode(query)
         similarities = {}
         
         for task, task_embed in self.task_embeddings.items():

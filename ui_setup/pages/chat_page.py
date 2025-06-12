@@ -1,4 +1,5 @@
 import io
+import os
 from typing import List, Dict, Any
 import flet as ft
 import pandas as pd
@@ -33,6 +34,10 @@ class ChatPage:
         self.file_picker = ft.FilePicker()
         self.page.overlay.append(self.file_picker)
         self._excel_bytes = None
+
+        self.data_history = []
+
+        self.uploaded_file_data = None        
         
         # UI Components
         self._init_ui_components()
@@ -173,7 +178,7 @@ class ChatPage:
         if result_type == "no_task":
             self._log_unmatched_query(original_query)
             suggestions = "\n".join([f"• {s}" for s in result.get('suggestions', [])])
-            return f"❓ {result['message']}\n\n💡 Bạn có thể thử:\n{suggestions}"
+            return f"❓ {result['message']}\n\n💡 Bạn muốn báo cáo về loại dữ liệu nào?:\n{suggestions}"
 
         elif result_type == "missing_conditions":
             msg = f"📋 {result['message']}\n" + "\n".join(result['missing_conditions'])
@@ -189,139 +194,79 @@ class ChatPage:
 
         return "⚠️ Phản hồi không xác định."
 
-    def _log_unmatched_query(self, query):
+    def _log_unmatched_query(self, query, task=None):
+        os.makedirs("logs", exist_ok=True)
         with open("logs/unmatched_queries.txt", "a", encoding="utf-8") as f:
-            f.write(f"{datetime.now().isoformat()} >>> {query}\n")
+            f.write(f"{datetime.now().isoformat()} >>> {query}")
+            if task:
+                f.write(f" => {task}")
+            f.write("\n")
 
     def _handle_success_data(self, result):
         data = result["data"]
-                
-        # Format dữ liệu trả về
         if isinstance(data, dict):
-            if data.get("type") == "error":
-                return data["message"]
-            # Multiple tables - hiển thị từng cái một
-            self.last_data = {}
-            
-            for table_name, df in data.items():
-                if not df.empty:
-                    display_data = df.head(5)
-                    table = self._create_data_table(display_data)
-                    table_display_name = table_name.replace("_", " ").title()
-                    # Hiển thị ngay lập tức từng kết quả
-                    step_message = ChatMessage(
-                        "assistant", 
-                        f"📊 {table_display_name} ({len(df)} bản ghi):", 
-                        is_user=False
-                    )
-                    self.messages.append(step_message)
-                    self.display_message(step_message)
-                    self.chat_container.controls.append(table)
-                    self.page.update()
-
-                    self.last_data[table_name] = df
-
-            return None
-        
+            return {"type": "table_choices", "tables": data}
         elif isinstance(data, pd.DataFrame) and not data.empty:
-            # Single table
-            display_data = data.head(5)
-            table = self._create_data_table(display_data)
-            self.last_data = data
-            return (f"📊 {result['task_description']} ({len(data)} bản ghi):", table)
-        
+            return {
+                "type": "single_table",
+                "table": data,
+                "table_name": result.get("task_name", "Kết quả"),
+                "text": f"📊 {result['task_description']} ({len(data)} bản ghi):"
+            }
         elif isinstance(data, dict) and data.get("type") == "error":
             return data["message"]
-        
         else:
             return "❌ Không có dữ liệu nào được tìm thấy cho yêu cầu của bạn."
+    
+    def show_table_in_chat(self, query_idx, table_name):
+        if 0 <= query_idx < len(self.data_history):
+            df = self.data_history[query_idx]["tables"].get(table_name)
+            if df is not None and not df.empty:
+                table = self._create_data_table(df.head(10))
+                table_container = ft.Container(
+                    content=ft.Column([
+                        ft.Row(
+                            [
+                                ft.Text(f"📊 {table_name.replace('_',' ').title()}", size=15, weight=ft.FontWeight.BOLD),
+                                ft.IconButton(
+                                    icon=ft.Icons.CLOSE,
+                                    tooltip="Đóng bảng này",
+                                    on_click=None  # Gán sau
+                                )
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN
+                        ),
+                        table
+                    ]),
+                    bgcolor=ft.Colors.GREY_50,
+                    border_radius=10,
+                    padding=10
+                )
+                close_btn = table_container.content.controls[0].controls[1]
+                close_btn.on_click = lambda e, ctl=table_container: self.close_table_in_chat(ctl)
+                self.chat_container.controls.append(table_container)
+                self.page.update()
 
-    '''async def get_ai_response(self, message_text: str) -> Any:
-        """Improved AI response với async processing"""
-        try:
-            # Lấy context từ UI (file data, etc.)
-            context = {}
-            if hasattr(self, 'last_data') and self.last_data is not None:
-                context['file_data'] = self.last_data
-
-            # Thêm callback để hiển thị progress
-            context['add_process_message'] = self.add_progress_message
-
-            context['query'] = message_text
-            
-            # Process với task-based approach
-            result = await self.query_engine.process_query_with_tasks(
-                message_text, 
-                context
-            )
-            
-            if result["type"] == "no_task":
-                return f"❓ {result['message']}\n\n💡 Bạn có thể thử:\n" + "\n".join([f"• {s}" for s in result['suggestions']])
-            
-            elif result["type"] == "missing_conditions":
-                message = f"📋 {result['message']}\n" + "\n".join(result['missing_conditions'])
-                if result.get("example"):
-                    message += f"\n\n{result['example']}"
-                return message
-            
-            elif result["type"] == "success":
-                data = result["data"]
-                
-                # Format dữ liệu trả về
-                if isinstance(data, dict):
-                    if data.get("type") == "error":
-                        return data["message"]
-                    # Multiple tables - hiển thị từng cái một
-                    self.last_data = {}
-                    
-                    for table_name, df in data.items():
-                        if not df.empty:
-                            display_data = df.head(5)
-                            table = self._create_data_table(display_data)
-                            table_display_name = table_name.replace("_", " ").title()
-                            # Hiển thị ngay lập tức từng kết quả
-                            step_message = ChatMessage(
-                                "assistant", 
-                                f"📊 {table_display_name} ({len(df)} bản ghi):", 
-                                is_user=False
-                            )
-                            self.messages.append(step_message)
-                            self.display_message(step_message)
-                            self.chat_container.controls.append(table)
-                            self.page.update()
-
-                            self.last_data[table_name] = df
-
-                    return None
-                
-                elif isinstance(data, pd.DataFrame) and not data.empty:
-                    # Single table
-                    display_data = data.head(5)
-                    table = self._create_data_table(display_data)
-                    self.last_data = data
-                    return (f"📊 {result['task_description']} ({len(data)} bản ghi):", table)
-                
-                elif isinstance(data, dict) and data.get("type") == "error":
-                    return data["message"]
-                
-                else:
-                    return "❌ Không có dữ liệu nào được tìm thấy cho yêu cầu của bạn."
-            
-            elif result["type"] == "error":
-                return f"❌ {result['message']}"
-                
-        except ConnectionError:
-            return "❌ Lỗi kết nối cơ sở dữ liệu. Vui lòng thử lại."
-        except TimeoutError:
-            return "❌ Hết thời gian chờ. Vui lòng thử lại."
-        except Exception as e:
-            print(f"Unexpected error in get_ai_response: {e}")
-            return "❌ Có lỗi không mong muốn xảy ra. Vui lòng thử lại." '''
+    def close_table_in_chat(self, table_container):
+        if table_container in self.chat_container.controls:
+            self.chat_container.controls.remove(table_container)
+            self.page.update()            
+    
+    def download_one_table(self,query_idx, table_name):
+        if 0 <= query_idx < len(self.data_history):
+            df = self.data_history[query_idx]["tables"].get(table_name)
+            if df is not None and not df.empty:
+                excel_bytes = self.to_excel({table_name: df})
+                self._excel_bytes = excel_bytes
+                self.file_picker.on_result = self.save_excel
+                self.file_picker.save_file(file_type=ft.FilePickerFileType.CUSTOM, allowed_extensions=["xlsx"])
     
     def _create_data_table(self, data: pd.DataFrame) -> ft.DataTable:
         """Tạo DataTable từ DataFrame"""
+        
         if "id" in data.columns:
             data = data.drop(columns=["id"])
+
         return ft.DataTable(
             columns=[ft.DataColumn(ft.Text(col, weight=ft.FontWeight.BOLD)) for col in data.columns],
             rows=[
@@ -334,30 +279,7 @@ class ChatPage:
             vertical_lines=ft.BorderSide(1, ft.Colors.GREY_200),
             horizontal_lines=ft.BorderSide(1, ft.Colors.GREY_200),
         )
-    
-    def _format_results(self, results: Dict[str, pd.DataFrame], codes: List[str]) -> Any:
-        """Format kết quả trả về"""
-        if not results or all(df.empty for df in results.values()):
-            codes_text = ", ".join(codes)
-            return f"❌ Không tìm thấy dữ liệu cho mã: {codes_text}"
         
-        # Prepare multiple results
-        formatted_results = []
-        self.last_data = {}
-        
-        for table_name, data in results.items():
-            if not data.empty:
-                # Limit display data
-                display_data = data.head(10)
-                table = self._create_data_table(display_data)
-                
-                # Format table name
-                table_display_name = table_name.replace("_", " ").title()
-                formatted_results.append((f"📊 {table_display_name} ({len(data)} bản ghi):", table))
-                self.last_data[table_name] = data
-        
-        return formatted_results if len(formatted_results) > 1 else formatted_results[0]
-    
     def preprocess_question(self, question: str) -> str:
         """Preprocess question"""
         question = question.lower().strip()
@@ -514,62 +436,78 @@ Hãy thử hỏi tôi về dữ liệu bạn cần! 🚀"""
             self.page.update()
     
     async def send_message(self, e=None):
-        """Send message"""
         message_text = self.input_field.value.strip()
         if not message_text:
             return
-        
-        # Add user message
+
         user_message = ChatMessage("user", message_text, is_user=True)
         self.messages.append(user_message)
         self.display_message(user_message)
-        
-        # Clear input
         self.input_field.value = ""
         self.page.update()
 
-        # Warm up nếu cần
         if not getattr(self, "_warmed_up", False):
             await self.query_engine.warm_up_connections()
             self._warmed_up = True
-        
-        # Show typing indicator
+
         typing_indicator = self.show_typing_indicator()
-        
+
         try:
-            # Get AI response
             ai_response = await self.get_ai_response(message_text)
             self.remove_typing_indicator(typing_indicator)
 
             if ai_response is None:
-                # Đã hiển thị từng bước, chỉ cần thêm download prompt
-                self.add_download_prompt()
-            
-            elif isinstance(ai_response, list):
-                # Multiple results
-                for text, table in ai_response:
-                    ai_message = ChatMessage("assistant", text, is_user=False)
-                    self.messages.append(ai_message)
-                    self.display_message(ai_message)
-                    self.chat_container.controls.append(table)
+                # Không append None vào chat
                 self.add_download_prompt()
 
-            elif isinstance(ai_response, tuple):
-                # Single result with table
-                text, table = ai_response
-                ai_message = ChatMessage("assistant", text, is_user=False)
-                self.messages.append(ai_message)
-                self.display_message(ai_message)
-                self.chat_container.controls.append(table)
-                self.add_download_prompt()
-            else:
-                # Text only
+            elif isinstance(ai_response, dict) and ai_response.get("type") in ["table_choices", "single_table"]:
+                if ai_response["type"] == "table_choices":
+                    tables = ai_response["tables"]
+                else:
+                    table_name = ai_response.get("table_name", "Kết quả")
+                    tables = {table_name: ai_response["table"]}
+
+                self.data_history.append({
+                    "query": message_text,
+                    "timestamp": datetime.now(),
+                    "tables": tables
+                })
+
+                table_buttons = []
+                current_query_idx = len(self.data_history) - 1
+                
+                for table_name, df in tables.items():
+                    btn = ft.ElevatedButton(
+                        f"Xem {table_name.replace('_',' ').title()} ({len(df)} dòng)",
+                        on_click=lambda e, idx=current_query_idx, tn=table_name: self.show_table_in_chat(idx, tn)
+                    )
+                    download_btn = ft.IconButton(
+                        icon=ft.Icons.DOWNLOAD,
+                        tooltip=f"Tải {table_name.replace('_',' ').title()}",
+                        on_click=lambda e, idx=current_query_idx, tn=table_name: self.download_one_table(idx, tn)
+                    )
+                    table_buttons.append(ft.Row([btn, download_btn], spacing=10))
+                        # table_buttons.append(btn)
+                msg = ChatMessage("assistant", "🗂️ Chọn bảng bạn muốn xem hoặc tải xuống:", is_user=False)
+                self.messages.append(msg)
+                self.display_message(msg)
+                self.chat_container.controls.extend(table_buttons)
+                if ai_response["type"] == "table_choices":
+                    self.add_download_prompt()
+                    self.last_data = tables
+
+            elif isinstance(ai_response, str):
                 ai_message = ChatMessage("assistant", ai_response, is_user=False)
                 self.messages.append(ai_message)
                 self.display_message(ai_message)
-                
+
+            else:
+                # fallback
+                ai_message = ChatMessage("assistant", str(ai_response), is_user=False)
+                self.messages.append(ai_message)
+                self.display_message(ai_message)
+
             self.page.update()
-            
         except Exception as ex:
             self.remove_typing_indicator(typing_indicator)
             error_message = ChatMessage("assistant", f"❌ Lỗi: {str(ex)}", is_user=False)
@@ -623,7 +561,7 @@ Hãy thử hỏi tôi về dữ liệu bạn cần! 🚀"""
     
     def add_download_prompt(self):
         """Add download prompt"""
-        prompt = ft.Text("Bạn có muốn tải dữ liệu về không?")
+        prompt = ft.Text("Bạn có muốn tải tất cả dữ liệu này về không?")
         download_btn = ft.ElevatedButton(
             "Tải về",
             icon=ft.Icons.DOWNLOAD,
@@ -685,7 +623,7 @@ Hãy thử hỏi tôi về dữ liệu bạn cần! 🚀"""
             if not file_path.lower().endswith(".xlsx"):
                 file_path += ".xlsx"
 
-            with open(result.path, "wb") as f:
+            with open(file_path, "wb") as f:
                 f.write(self._excel_bytes)
             self.comment_text.value = "✅ Tài liệu tải xong!"
             self.page.update()
@@ -697,7 +635,7 @@ Hãy thử hỏi tôi về dữ liệu bạn cần! 🚀"""
                 file_path = result.files[0].path
                 try:
                     df = pd.read_excel(file_path)
-                    self.last_data = df
+                    self.uploaded_file_data = df
                     self.display_message(ChatMessage("user", f"✅ Đã tải file: {file_path} ({len(df)} dòng)"))
                     
                 except Exception as ex:
@@ -706,4 +644,5 @@ Hãy thử hỏi tôi về dữ liệu bạn cần! 🚀"""
 
         self.file_picker.on_result = on_file_selected       
         self.file_picker.pick_files(allow_multiple=False, allowed_extensions=["xlsx", "xls"])
+
         

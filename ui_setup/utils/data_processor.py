@@ -14,7 +14,7 @@ class DataProcessor:
 
         normalized_codes = []
         for code in code_name.split(","):
-            code = code.strip()
+            code = code.strip().upper()
             if len(code) > 9:
                 normalized_codes.append(f"S{code[:8]}")
             else:
@@ -26,7 +26,7 @@ class DataProcessor:
     def extract_codes(self, code_name: str) -> List[str]:
         code_list = []
         for code in code_name.split(","):
-            code = code.strip()
+            code = code.strip().upper()
             if len(code) == 9 and code.startswith("S"):
                 code_list.append(code[1:])  # Bỏ ký tự đầu
             else:
