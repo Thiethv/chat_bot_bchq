@@ -10,30 +10,36 @@ class MasterList:
         '''
             Lấy danh sách trims từ file excel và đẩy lên supabase
         '''
+        print("Debug data", self.data.columns)
+        
         if self.data.empty:
             print("❌ Không có dữ liệu trims")
             return
+        
+        cols = [1, 3, 7]
+        df_excel = self.data.iloc[:, cols]
+        df_excel.columns = ["THV_CODE", "CODE_CUSTOMS", "CONVERT"]
 
         # Lấy dữ liệu từ supabase
         data_supa = self.supabase.get_data("trims_list", "*")
-        data = self.data[~self.data["THV_CODE"].isin(data_supa["THV_CODE"])] if not data_supa.empty else self.data
+        data = df_excel[~df_excel["THV_CODE"].isin(data_supa["THV_CODE"])] if not data_supa.empty else df_excel
 
-        if not data_supa.empty:           
+        if not data_supa.empty:         
             # Tạo dict ánh xạ THV_CODE -> (CODE_CUSTOMS, CONVERT) từ data_supa
             code_custom_convert_map = (
                 data_supa.set_index("THV_CODE")[["CODE_CUSTOMS", "CONVERT"]]
                 .to_dict(orient="index")
             )
             # Tạo 2 cột mới để so sánh
-            self.data["Convet_in_data"] = self.data["THV_CODE"].map(lambda x: code_custom_convert_map.get(x, {}).get("CONVERT"))
-            self.data["Code_customs_in_data"] = self.data["THV_CODE"].map(lambda x: code_custom_convert_map.get(x, {}).get("CODE_CUSTOMS"))
+            df_excel["Convet_in_data"] = df_excel["THV_CODE"].map(lambda x: code_custom_convert_map.get(x, {}).get("CONVERT"))
+            df_excel["Code_customs_in_data"] = df_excel["THV_CODE"].map(lambda x: code_custom_convert_map.get(x, {}).get("CODE_CUSTOMS"))
 
             # Lọc các THV_CODE có CONVERT hoặc CODE_CUSTOMS khác so với dữ liệu supabase
-            df_check = self.data[
-                (self.data["THV_CODE"].isin(data_supa["THV_CODE"])) &
+            df_check = df_excel[
+                (df_excel["THV_CODE"].isin(data_supa["THV_CODE"])) &
                 (
-                    (self.data["CONVERT"] != self.data["Convet_in_data"]) |
-                    (self.data["CODE_CUSTOMS"] != self.data["Code_customs_in_data"])
+                    (df_excel["CONVERT"] != df_excel["Convet_in_data"]) |
+                    (df_excel["CODE_CUSTOMS"] != df_excel["Code_customs_in_data"])
                 )
             ]
             if not df_check.empty:
@@ -47,6 +53,7 @@ class MasterList:
             data = data.drop("Code_customs_in_data", axis=1)
 
         data_trims_list = data.copy()
+        print("Debusg data_trims_list", data_trims_list)
         if data_trims_list.empty:
             print("❌ Không có dữ liệu trims")
             return
@@ -57,7 +64,7 @@ class MasterList:
         data_trims_list["CONVERT"] = data_trims_list["CONVERT"].astype(float)
 
         data_trims_list = data_trims_list.drop_duplicates()
-
+        print(data_trims_list)
         data_json = data_trims_list.to_dict('records')
         if self.supabase.insert_data("trims_list", data_json) == True:
             print(f"✅ Đã đưa dữ liệu trims: {len(data_trims_list)} dòng")
@@ -70,14 +77,18 @@ class MasterList:
         '''
             Lấy danh sách fabric từ file excel và đẩy lên supabase
         '''
+        
         if self.data.empty:
             print("❌ Không có dữ liệu fabric")
-            return        
+            return 
+        cols = [2, 4, 5]
+        df_excel = self.data.iloc[:, cols]
+        df_excel.columns = ["PO_NO", "Width", "CODE_CUSTOMS"]       
 
         # Lý dữ liệu từ supabase
         data_supa = self.supabase.get_data("fabric_list", "*")
         
-        data = self.data[~self.data["PO_NO"].isin(data_supa["PO_NO"])] if not data_supa.empty else self.data
+        data = df_excel[~df_excel["PO_NO"].isin(data_supa["PO_NO"])] if not data_supa.empty else df_excel
 
         if not data_supa.empty:
             # Tạo dict ánh xạ PO_NO -> Width từ data_supa
@@ -88,10 +99,10 @@ class MasterList:
                 .to_dict()
             )
 
-            self.data["Convet_in_data"] = self.data["PO_NO"].map(code_custom_convert_map)
+            df_excel["Convet_in_data"] = df_excel["PO_NO"].map(code_custom_convert_map)
 
-            df_check = self.data[(self.data["PO_NO"].isin(data_supa["PO_NO"]))
-                                    & (self.data["Width"] != self.data["Convet_in_data"])] # Lọc các PO_NO có Width khác Convet_in_data
+            df_check = df_excel[(df_excel["PO_NO"].isin(data_supa["PO_NO"]))
+                                    & (df_excel["Width"] != df_excel["Convet_in_data"])] # Lọc các PO_NO có Width khác Convet_in_data
             if not df_check.empty:
                 codes = df_check["PO_NO"].unique().tolist()
                 conditions = f' "PO_NO" IN {tuple(codes)} ' if len(codes) > 1 else f' "PO_NO" = {codes[0]} '
@@ -128,7 +139,7 @@ class MasterList:
         if self.data.empty:
             print("❌ Không có dữ liệu range")
             return
-
+        
         # Lý dữ liệu từ supabase
         data_supa = self.supabase.get_data("range_dm", "*")
 
@@ -136,6 +147,7 @@ class MasterList:
 
         # Đọc dữ liệu từ file Excel
         df = data.copy()
+
         df.columns = ["CODE", "MIN", "MAX", "CODE_NAME", "UNITS", "RANGE"]
         df["MIN"] = pd.to_numeric(df["MIN"], errors='coerce')
         df['MAX'] = pd.to_numeric(df['MAX'], errors='coerce')

@@ -271,7 +271,7 @@ class TaskManager:
                 else:
                     result = condition.validation_func(query)
                 
-                if result:
+                if result is not None:
                     satisfied_conditions[condition.name] = result
                 elif condition.required:
                     missing_conditions.append(condition)
@@ -350,7 +350,8 @@ class TaskManager:
                         add_process("🔄 Đang tổng hợp DM Technical Report...")
 
                     await asyncio.to_thread(run_technical_report)
-                    data = await query_engine.get_data_async("dm_technical", "*", condition, limit=1000, offset=0)
+
+                    data = await query_engine.get_data_async("dm_technical", "*", condition)
                     data_cf = await query_engine.get_data_async("cutting_forecast", "*", conditions_cf)
                     data_sd = await query_engine.get_data_async("submat_demand", "*", conditions_sd)
                 
@@ -543,8 +544,7 @@ class TaskManager:
         """Thực thi Insert Trims task"""
         try:
             file_data = conditions.get("file_data")
-            add_process = context.get("add_process_message") if context else None
-            if not file_data:
+            if file_data is None:
                 raise ValueError("Không có dữ liệu file")
             
             def run_insert_trims():
@@ -554,8 +554,8 @@ class TaskManager:
                 
             await asyncio.to_thread(run_insert_trims)
 
-            if add_process:
-                add_process("📊 Đã cập nhật dữ liệu master trims list thành công")
+            return {"type": "success", "message": "📊 Đã cập nhật dữ liệu master trims list thành công"}
+        
         except Exception as e:
             return {"type": "error", "message": f"❌ Lỗi khi thực thi Insert Trims: {e}"}
     
@@ -563,8 +563,8 @@ class TaskManager:
         """Thực thi Insert Fabric task"""
         try:
             file_data = conditions.get("file_data")
-            add_process = context.get("add_process_message") if context else None
-            if not file_data:
+
+            if file_data is None:
                 raise ValueError("Không có dữ liệu file")
             
             def run_insert_fabric():
@@ -574,8 +574,7 @@ class TaskManager:
                 
             await asyncio.to_thread(run_insert_fabric)
 
-            if add_process:
-                add_process("📊 Đã cập nhật dữ liệu master fabric list")
+            return {"type": "success", "message": "📊 Đã cập nhật dữ liệu master fabric list thành công"}
         except Exception as e:
             return {"type": "error", "message": f"❌ Lỗi khi thực thi Insert Fabric: {e}"}
     
@@ -583,9 +582,8 @@ class TaskManager:
         """Thực thi Insert Range Demand task"""
         try:
             file_data = conditions.get("file_data")
-            print("file_data:",file_data)
-            add_process = context.get("add_process_message") if context else None
-            if not file_data:
+
+            if file_data is None:
                 raise ValueError("Không có dữ liệu file")
             
             def run_insert_range_demand():
@@ -595,8 +593,7 @@ class TaskManager:
                 
             await asyncio.to_thread(run_insert_range_demand)
 
-            if add_process:
-                add_process("📊 Đã cập nhật dữ liệu range demand")
+            return {"type": "success", "message": "📊 Đã cập nhật dữ liệu range demand thành công"}
         
         except Exception as e:
             return {"type": "error", "message": f"❌ Lỗi khi thực thi Insert Range Demand: {e}"}
@@ -782,7 +779,7 @@ class AsyncQueryEngine:
                     "Xem dữ liệu submat transaction summary"
                 ]
             }
-        
+
         # Validate task conditions
         validation = self.task_manager.validate_task(task_name, query, context)
         

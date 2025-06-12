@@ -20,6 +20,9 @@ class ChatMessage:
         self.timestamp = timestamp or datetime.now()
         self.id = str(uuid.uuid4())
 
+    def clone(self):
+        return ChatMessage(self.user_id, self.text, self.is_user)
+
 class ChatPage:
     def __init__(self, page: ft.Page):
         self.page = page
@@ -37,7 +40,9 @@ class ChatPage:
 
         self.data_history = []
 
-        self.uploaded_file_data = None        
+        self.uploaded_file_data = None
+
+        self.welcome_shown = False        
         
         # UI Components
         self._init_ui_components()
@@ -93,11 +98,6 @@ class ChatPage:
                         weight=ft.FontWeight.BOLD,
                         color=ft.Colors.BLUE_800
                     ),
-                    ft.IconButton(
-                        icon=ft.Icons.DELETE_OUTLINE,
-                        on_click=self.clear_chat,
-                        tooltip="Xóa lịch sử chat"
-                    )
                 ]
             ),
             padding=ft.padding.all(15),
@@ -166,11 +166,26 @@ class ChatPage:
             return "❌ Có lỗi không mong muốn xảy ra. Vui lòng thử lại."
         
     def _build_context(self, message_text: str) -> dict:
-        return {
-            'file_data': self.last_data,
-            'query': message_text,
-            'add_process_message': self.add_progress_message
-        }
+        msg_norm = message_text.lower().strip()
+        # Nhận diện các lệnh liên quan insert trims/fabric/range dm
+        insert_tasks = [
+            "insert trims", "cập nhật trims", "trims list",
+            "insert fabric", "cập nhật fabric", "fabric list",
+            "insert range dm", "cập nhật range dm", "range dm list"
+        ]
+        if any(word in msg_norm for word in insert_tasks):
+           
+            return {
+                'file_data': self.uploaded_file_data,
+                'query': message_text,
+                'add_process_message': self.add_progress_message
+            }
+        else:
+            return {
+                'file_data': self.last_data,
+                'query': message_text,
+                'add_process_message': self.add_progress_message
+            }
     
     def _format_ai_result(self, result: dict, original_query: str) -> Any:
         result_type = result.get("type")
@@ -204,8 +219,13 @@ class ChatPage:
 
     def _handle_success_data(self, result):
         data = result["data"]
+        # Nếu là dict có message (task insert thành công)
+        if isinstance(data, dict) and data.get("type") == "success" and "message" in data:
+            return data["message"]    # chỉ hiện message thành công, không báo lỗi
+    
         if isinstance(data, dict):
             return {"type": "table_choices", "tables": data}
+        
         elif isinstance(data, pd.DataFrame) and not data.empty:
             return {
                 "type": "single_table",
@@ -215,13 +235,14 @@ class ChatPage:
             }
         elif isinstance(data, dict) and data.get("type") == "error":
             return data["message"]
-        else:
-            return "❌ Không có dữ liệu nào được tìm thấy cho yêu cầu của bạn."
+        
+        # Nếu là insert thành công hoặc None, KHÔNG trả về message lỗi!
+        return None
     
     def show_table_in_chat(self, query_idx, table_name):
         if 0 <= query_idx < len(self.data_history):
             df = self.data_history[query_idx]["tables"].get(table_name)
-            if df is not None and not df.empty:
+            if isinstance(df, pd.DataFrame) and not df.empty:
                 table = self._create_data_table(df.head(10))
                 table_container = ft.Container(
                     content=ft.Column([
@@ -246,6 +267,11 @@ class ChatPage:
                 close_btn.on_click = lambda e, ctl=table_container: self.close_table_in_chat(ctl)
                 self.chat_container.controls.append(table_container)
                 self.page.update()
+            elif isinstance(df, str):
+                # Nếu là chuỗi, hiển thị luôn chuỗi đó dưới dạng message lỗi
+                self.display_message(ChatMessage("assistant", f"❌ {df}", is_user=False))
+            else:
+                self.display_message(ChatMessage("assistant", f"❌ Không có dữ liệu hợp lệ để hiển thị", is_user=False))
 
     def close_table_in_chat(self, table_container):
         if table_container in self.chat_container.controls:
@@ -255,11 +281,15 @@ class ChatPage:
     def download_one_table(self,query_idx, table_name):
         if 0 <= query_idx < len(self.data_history):
             df = self.data_history[query_idx]["tables"].get(table_name)
-            if df is not None and not df.empty:
+            if isinstance(df, pd.DataFrame) and not df.empty:
                 excel_bytes = self.to_excel({table_name: df})
                 self._excel_bytes = excel_bytes
                 self.file_picker.on_result = self.save_excel
                 self.file_picker.save_file(file_type=ft.FilePickerFileType.CUSTOM, allowed_extensions=["xlsx"])
+            elif isinstance(df, str):
+                self.display_message(ChatMessage("assistant", f"❌ Không thể tải: {df}", is_user=False))
+            else:
+                self.display_message(ChatMessage("assistant", f"❌ Không có dữ liệu hợp lệ để tải", is_user=False))
     
     def _create_data_table(self, data: pd.DataFrame) -> ft.DataTable:
         """Tạo DataTable từ DataFrame"""
@@ -309,18 +339,24 @@ class ChatPage:
     # UI Methods
     def add_welcome_message(self):
         """Add welcome message"""
-        welcome_text = """👋 Xin chào! Tôi là AI Assistant.
+        if not self.welcome_shown:
+            welcome_text = """
+👋 Xin chào! Tôi là AI Assistant.
 
 💡 Bạn có thể hỏi tôi:
 • "Tính định mức kỹ thuật cho GO S24M12345 hoặc JO 24M12345JP01"
 • "Báo cáo so sánh định mức cho GO/JO"  
-• "Cutting forecast cho GO/JO"
+• "Cutting forecast cho GO/JO",
+• "Cập nhật range dm (Cần add file excel)"
 
-Hãy thử hỏi tôi về dữ liệu bạn cần! 🚀"""
+Hãy thử hỏi tôi về dữ liệu bạn cần! 🚀
+            """
         
-        welcome_msg = ChatMessage("assistant", welcome_text, is_user=False)
-        self.messages.append(welcome_msg)
-        self.display_message(welcome_msg)
+            welcome_msg = ChatMessage("assistant", welcome_text, is_user=False)
+            self.messages.append(welcome_msg)
+            self.display_message(welcome_msg)
+
+            self.welcome_shown = True
     
     def display_message(self, message: ChatMessage):
         """Display message in chat"""
@@ -493,8 +529,9 @@ Hãy thử hỏi tôi về dữ liệu bạn cần! 🚀"""
                 self.display_message(msg)
                 self.chat_container.controls.extend(table_buttons)
                 if ai_response["type"] == "table_choices":
-                    self.add_download_prompt()
-                    self.last_data = tables
+                    if tables and any(df is not None and not df.empty for df in tables.values()):
+                        self.add_download_prompt()
+                        self.last_data = tables
 
             elif isinstance(ai_response, str):
                 ai_message = ChatMessage("assistant", ai_response, is_user=False)
@@ -513,52 +550,7 @@ Hãy thử hỏi tôi về dữ liệu bạn cần! 🚀"""
             error_message = ChatMessage("assistant", f"❌ Lỗi: {str(ex)}", is_user=False)
             self.messages.append(error_message)
             self.display_message(error_message)
-    
-    def clear_chat(self, e=None):
-        """Clear chat history"""
-        def close_dialog(e):
-            if hasattr(self.page, 'dialog') and self.page.dialog:
-                self.page.dialog.open = False
-                self.page.update()
         
-        def confirm_clear(e):
-            self.messages.clear()
-            self.chat_container.controls.clear()
-            self.add_welcome_message()
-            close_dialog(e)
-            
-            self.page.snack_bar = ft.SnackBar(
-                content=ft.Text("🗑️ Đã xóa lịch sử chat!"),
-                bgcolor=ft.Colors.ORANGE
-            )
-            self.page.snack_bar.open = True
-            self.page.update()
-        
-        confirm_dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("🗑️ Xóa lịch sử chat", weight=ft.FontWeight.BOLD),
-            content=ft.Text("Bạn có chắc chắn muốn xóa toàn bộ lịch sử chat không?"),
-            actions=[
-                ft.Row(
-                    controls=[
-                        ft.TextButton("Hủy", on_click=close_dialog),
-                        ft.ElevatedButton(
-                            "Xóa", 
-                            on_click=confirm_clear, 
-                            bgcolor=ft.Colors.RED, 
-                            color=ft.Colors.WHITE
-                        )
-                    ],
-                    alignment=ft.MainAxisAlignment.END,
-                    spacing=10
-                )
-            ]
-        )
-        
-        self.page.dialog = confirm_dialog
-        confirm_dialog.open = True
-        self.page.update()
-    
     def add_download_prompt(self):
         """Add download prompt"""
         prompt = ft.Text("Bạn có muốn tải tất cả dữ liệu này về không?")
@@ -629,20 +621,15 @@ Hãy thử hỏi tôi về dữ liệu bạn cần! 🚀"""
             self.page.update()
 
     def add_file(self, e):
-        ''' tải file excel lên app và lưu vào dataframe '''
         def on_file_selected(result):
             if result.files and len(result.files) > 0:
                 file_path = result.files[0].path
                 try:
                     df = pd.read_excel(file_path)
-                    self.uploaded_file_data = df
+                    self.uploaded_file_data = df  # LUÔN LƯU Ở ĐÂY
                     self.display_message(ChatMessage("user", f"✅ Đã tải file: {file_path} ({len(df)} dòng)"))
-                    
                 except Exception as ex:
-                    self.comment_text.value = f"❌ Lỗi khi đọc file: {ex}"
-                self.page.update()
-
-        self.file_picker.on_result = on_file_selected       
+                    print("Lỗi đọc file:", ex)
+        self.file_picker.on_result = on_file_selected
         self.file_picker.pick_files(allow_multiple=False, allowed_extensions=["xlsx", "xls"])
-
         
